@@ -1,0 +1,1825 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+
+<!-- ══ PWA & MOBILE META ══════════════════════════════════════════ -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="World">
+<meta name="application-name" content="World">
+<meta name="theme-color" content="#f0f7f2">
+<meta name="msapplication-TileColor" content="#f0f7f2">
+<meta name="format-detection" content="telephone=no">
+
+<!-- ══ TITLE & DESCRIPTION ═══════════════════════════════════════ -->
+<title>World – Basureros</title>
+<meta name="description" content="Encuentra basureros y puntos de reciclaje cerca de ti">
+
+<!-- ══ PWA MANIFEST (inline via JS) ══════════════════════════════ -->
+<script>
+// Inline manifest so it works as a single-file PWA
+const manifest = {
+  name: "World – Basureros",
+  short_name: "World",
+  description: "Encuentra basureros y puntos de reciclaje cerca de ti",
+  start_url: "./",
+  display: "standalone",
+  orientation: "portrait",
+  background_color: "#f0f7f2",
+  theme_color: "#f0f7f2",
+  icons: [
+    { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>", sizes: "192x192", type: "image/svg+xml" },
+    { src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌍</text></svg>", sizes: "512x512", type: "image/svg+xml" }
+  ]
+};
+const blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
+const manifestURL = URL.createObjectURL(blob);
+const link = document.createElement('link');
+link.rel = 'manifest'; link.href = manifestURL;
+document.head.appendChild(link);
+</script>
+
+<!-- ══ FONTS ══════════════════════════════════════════════════════ -->
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+<!-- ══ AUTH (100% local, sin backend) ════════════════════════════ -->
+<script>
+/* ══════════════════════════════════════════════════════════════════
+   SISTEMA DE AUTENTICACIÓN LOCAL
+   • Registro / Login con email + contraseña
+   • "Continuar con Google" y "Continuar con Apple" (nombre + email)
+   • Todo guardado en localStorage del dispositivo
+   • Sesión persistente entre visitas
+═══════════════════════════════════════════════════════════════════ */
+
+const DB_KEY   = 'world_users_db';
+const SESS_KEY = 'world_session';
+
+// ── Helpers de base de datos local ────────────────────────────
+function getDB() {
+  try { return JSON.parse(localStorage.getItem(DB_KEY)) || {}; }
+  catch(e) { return {}; }
+}
+function saveDB(db) { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+function hashPass(p) {
+  // Simple deterministic hash (not cryptographic, OK for local demo)
+  let h = 0;
+  for (let i = 0; i < p.length; i++) h = (Math.imul(31, h) + p.charCodeAt(i)) | 0;
+  return h.toString(36);
+}
+
+function saveSession(user) {
+  localStorage.setItem(SESS_KEY, JSON.stringify(user));
+}
+function clearSession() {
+  localStorage.removeItem(SESS_KEY);
+}
+function getSession() {
+  try { return JSON.parse(localStorage.getItem(SESS_KEY)); }
+  catch(e) { return null; }
+}
+
+// ── Restore session on load ─────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  const sess = getSession();
+  if (sess) window.onAuthStateUser(sess);
+  else      window.onAuthStateNoUser();
+});
+
+// ── Register new user ───────────────────────────────────────
+window.registerUser = function() {
+  clearFormErrors();
+  const name  = v('regName');
+  const email = v('regEmail').toLowerCase();
+  const pass  = v('regPass');
+  const pass2 = v('regPass2');
+
+  if (!name)  return err('regNameErr',  'Ingresa tu nombre');
+  if (!email) return err('regEmailErr', 'Ingresa tu correo');
+  if (!/\S+@\S+\.\S+/.test(email)) return err('regEmailErr', 'Correo inválido');
+  if (!pass)  return err('regPassErr',  'Ingresa una contraseña');
+  if (pass.length < 6) return err('regPassErr', 'Mínimo 6 caracteres');
+  if (pass !== pass2) return err('regPass2Err', 'Las contraseñas no coinciden');
+
+  const db = getDB();
+  if (db[email]) return err('regEmailErr', 'Este correo ya está registrado');
+
+  const user = { uid: btoa(email+Date.now()), displayName: name, email, photoURL: null, provider: 'email', joinDate: new Date().toLocaleDateString('es') };
+  db[email] = { ...user, passHash: hashPass(pass) };
+  saveDB(db);
+  saveSession(user);
+  window.onSignInSuccess(user);
+};
+
+// ── Login existing user ─────────────────────────────────────
+window.loginUser = function() {
+  clearFormErrors();
+  const email = v('loginEmail').toLowerCase();
+  const pass  = v('loginPass');
+
+  if (!email) return err('loginEmailErr', 'Ingresa tu correo');
+  if (!pass)  return err('loginPassErr',  'Ingresa tu contraseña');
+
+  const db   = getDB();
+  const rec  = db[email];
+  if (!rec)                        return err('loginEmailErr', 'Correo no registrado');
+  if (rec.passHash !== hashPass(pass)) return err('loginPassErr',  'Contraseña incorrecta');
+
+  const user = { uid: rec.uid, displayName: rec.displayName, email: rec.email, photoURL: rec.photoURL, provider: rec.provider, joinDate: rec.joinDate };
+  saveSession(user);
+  window.onSignInSuccess(user);
+};
+
+// ── Social login (Google / Apple) ──────────────────────────
+window.signInGoogle = function() { showSocialForm('google'); };
+window.signInApple  = function() { showSocialForm('apple');  };
+
+function showSocialForm(provider) {
+  const isGoogle = provider === 'google';
+  document.getElementById('socialFormTitle').innerHTML =
+    isGoogle ? '<svg style="width:20px;height:20px;vertical-align:middle;margin-right:8px" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>Continuar con Google'
+            : '🍎 Continuar con Apple';
+  document.getElementById('socialProvider').value = provider;
+  document.getElementById('socialEmailHint').textContent =
+    isGoogle ? 'Usa tu correo de Gmail' : 'Usa tu correo de iCloud';
+  clearFormErrors();
+  showView('socialView');
+}
+
+window.submitSocial = function() {
+  clearFormErrors();
+  const name     = v('socialName');
+  const email    = v('socialEmail').toLowerCase();
+  const provider = document.getElementById('socialProvider').value;
+
+  if (!name)  return err('socialNameErr',  'Ingresa tu nombre');
+  if (!email) return err('socialEmailErr', 'Ingresa tu correo');
+  if (!/\S+@\S+\.\S+/.test(email)) return err('socialEmailErr', 'Correo inválido');
+
+  const db  = getDB();
+  let user;
+  if (db[email]) {
+    // Account exists – log in directly via social
+    user = { uid: db[email].uid, displayName: db[email].displayName, email: db[email].email, photoURL: db[email].photoURL, provider, joinDate: db[email].joinDate };
+  } else {
+    // Create new account
+    user = { uid: btoa(email+Date.now()), displayName: name, email, photoURL: null, provider, joinDate: new Date().toLocaleDateString('es') };
+    db[email] = { ...user, passHash: null };
+    saveDB(db);
+  }
+  saveSession(user);
+  window.onSignInSuccess(user);
+};
+
+// ── Sign Out ────────────────────────────────────────────────
+window.signOutUser = function() {
+  clearSession();
+  window.onSignOutSuccess();
+};
+
+// ── View switcher inside login screen ──────────────────────
+window.showView = function(id) {
+  ['loginView','registerView','socialView'].forEach(vid => {
+    document.getElementById(vid).style.display = (vid === id) ? 'block' : 'none';
+  });
+  clearFormErrors();
+};
+
+window.switchTab = function(tab) {
+  document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+  document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
+  showView(tab === 'login' ? 'loginView' : 'registerView');
+};
+
+window.togglePass = function(inputId, btn) {
+  const inp = document.getElementById(inputId);
+  if (inp.type === 'password') { inp.type = 'text';     btn.textContent = '🙈'; }
+  else                         { inp.type = 'password'; btn.textContent = '👁'; }
+};
+
+// ── Helpers ────────────────────────────────────────────────
+function v(id) { return (document.getElementById(id)||{}).value?.trim() || ''; }
+function err(id, msg) { const el = document.getElementById(id); if(el){ el.textContent = msg; el.style.display = 'block'; } }
+function clearFormErrors() {
+  document.querySelectorAll('.auth-error').forEach(el => { el.textContent = ''; el.style.display = 'none'; });
+}
+</script>
+
+<!-- ══ LEAFLET ════════════════════════════════════════════════════ -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+
+<style>
+/* ══ CSS VARIABLES ══════════════════════════════════════════════ */
+:root {
+  --bg:        #f0f7f2;
+  --surface:   #f7fbf8;
+  --ink:       #2d3a30;
+  --ink-soft:  #5a7060;
+  --green:     #27ae60;
+  --red:       #e05252;
+  --orange:    #e8962a;
+  --blue:      #3a9bd5;
+  --radius:    18px;
+  --radius-sm: 12px;
+  --radius-xs: 8px;
+  --shadow-sm: 0 2px 10px rgba(40,80,50,.12);
+  --shadow-md: 0 4px 18px rgba(40,80,50,.15);
+  --shadow-lg: 0 8px 32px rgba(40,80,50,.20);
+  --glass:     rgba(247,251,248,.88);
+  --glass-f:   blur(16px) saturate(1.5);
+
+  /* Safe areas for iPhone notch / Dynamic Island / Android cutouts */
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+}
+
+/* ══ RESET ══════════════════════════════════════════════════════ */
+*, *::before, *::after {
+  margin: 0; padding: 0; box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+html {
+  height: 100%;
+  /* Prevent iOS overscroll bounce */
+  overflow: hidden;
+  position: fixed;
+  width: 100%;
+}
+body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: 'Share Tech Mono', monospace;
+  background: var(--bg);
+  /* Prevent text resize on orientation change */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* ══ MAP (full screen) ══════════════════════════════════════════ */
+#map {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1;
+}
+
+/* ══ HEADER ════════════════════════════════════════════════════ */
+.header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  /* Respect iPhone notch / Dynamic Island */
+  padding-top: calc(var(--safe-top) + 10px);
+  padding-left: calc(var(--safe-left) + 14px);
+  padding-right: calc(var(--safe-right) + 14px);
+  padding-bottom: 14px;
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(to bottom, rgba(247,251,248,.97) 70%, transparent);
+  z-index: 100;
+  pointer-events: none;
+}
+.header > * { pointer-events: all; }
+
+.logo-circle {
+  width: 36px; height: 36px;
+  background: var(--surface);
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem; flex-shrink: 0;
+}
+.logo-text {
+  font-family: 'Special Elite', cursive;
+  font-size: 1.5rem; letter-spacing: 5px;
+  color: var(--ink); flex: 1;
+}
+.legend-btn {
+  background: var(--surface); border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: 0.62rem;
+  cursor: pointer; color: var(--ink);
+  font-family: 'Share Tech Mono', monospace;
+  box-shadow: var(--shadow-sm); white-space: nowrap;
+  /* Larger touch target for mobile */
+  min-height: 36px;
+}
+
+/* ══ ZOOM CONTROLS ══════════════════════════════════════════════ */
+.zoom-controls {
+  position: fixed;
+  right: calc(var(--safe-right) + 12px);
+  bottom: calc(var(--safe-bottom) + 170px);
+  z-index: 200;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.zoom-btn {
+  width: 42px; height: 42px;
+  background: var(--glass);
+  backdrop-filter: var(--glass-f);
+  -webkit-backdrop-filter: var(--glass-f);
+  border: none; border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  font-size: 1.4rem; font-weight: bold;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--ink);
+  /* iOS requires min 44px touch target */
+  min-width: 44px; min-height: 44px;
+  transition: transform .1s;
+  user-select: none;
+}
+.zoom-btn:active { transform: scale(.92); }
+
+/* ══ BOTTOM PANEL ═══════════════════════════════════════════════ */
+.bottom-panel {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 100;
+  /* Respect iPhone home bar */
+  padding-bottom: calc(var(--safe-bottom) + 10px);
+  padding-left: calc(var(--safe-left) + 12px);
+  padding-right: calc(var(--safe-right) + 12px);
+  padding-top: 10px;
+  background: linear-gradient(to top, rgba(247,251,248,.99) 82%, transparent);
+  pointer-events: none;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.bottom-panel > * { pointer-events: all; }
+
+/* ── Search bar ── */
+.search-wrap { position: relative; }
+.search-bar {
+  width: 100%;
+  background: var(--glass);
+  backdrop-filter: var(--glass-f);
+  -webkit-backdrop-filter: var(--glass-f);
+  border: none; border-radius: var(--radius);
+  padding: 13px 52px 13px 44px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 16px; /* 16px prevents iOS auto-zoom on focus */
+  color: var(--ink);
+  box-shadow: var(--shadow-md);
+  outline: none;
+  caret-color: var(--green);
+  transition: box-shadow .2s, background .2s;
+  /* Prevent iOS rounded input */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search-bar:focus {
+  background: rgba(247,251,248,.97);
+  box-shadow: var(--shadow-lg);
+}
+.search-bar::placeholder { color: var(--ink-soft); }
+
+.search-icon-left {
+  position: absolute; left: 14px; top: 50%;
+  transform: translateY(-50%);
+  font-size: 1rem; pointer-events: none;
+}
+.search-clear {
+  position: absolute; right: 50px; top: 50%;
+  transform: translateY(-50%);
+  background: none; border: none; font-size: 1rem;
+  cursor: pointer; color: var(--ink-soft);
+  display: none; padding: 6px;
+  min-width: 36px; min-height: 36px;
+  display: none; align-items: center; justify-content: center;
+}
+.search-clear.visible { display: flex; }
+
+.gps-btn {
+  position: absolute; right: 6px; top: 50%;
+  transform: translateY(-50%);
+  background: var(--green); border: none;
+  border-radius: var(--radius-xs);
+  width: 38px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.05rem; cursor: pointer; color: white;
+  box-shadow: var(--shadow-sm);
+  transition: background .2s, transform .1s;
+  min-width: 44px; min-height: 44px;
+  width: 44px; height: 44px;
+  right: 4px;
+}
+.gps-btn:active { transform: translateY(-50%) scale(.93); }
+.gps-btn.locating { animation: gpsSpin .7s linear infinite; background: var(--blue); }
+@keyframes gpsSpin {
+  0%   { transform: translateY(-50%) rotate(0deg); }
+  100% { transform: translateY(-50%) rotate(360deg); }
+}
+
+/* Suggestions – open upward */
+.suggestions {
+  position: absolute;
+  bottom: calc(100% + 7px); left: 0; right: 0;
+  background: rgba(247,251,248,.97);
+  backdrop-filter: var(--glass-f);
+  -webkit-backdrop-filter: var(--glass-f);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  z-index: 300; overflow: hidden; display: none;
+  max-height: 240px; overflow-y: auto;
+  /* Smooth iOS scrolling */
+  -webkit-overflow-scrolling: touch;
+}
+.suggestions.open { display: block; animation: fadeUp .15s ease; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.suggestion-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; cursor: pointer;
+  border-bottom: 1px solid rgba(40,80,50,.06);
+  transition: background .15s;
+  min-height: 52px; /* comfortable touch target */
+}
+.suggestion-item:last-child { border-bottom: none; }
+.suggestion-item:active { background: rgba(40,80,50,.05); }
+.sug-icon { font-size: 1rem; flex-shrink: 0; }
+.sug-main { font-size: 0.78rem; color: var(--ink); font-weight: bold; }
+.sug-sub { font-size: 0.64rem; color: var(--ink-soft); margin-top: 2px; }
+.gps-option .sug-main { color: var(--blue); }
+
+/* ── Ad + Message row ── */
+.bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ad-card {
+  background: var(--glass);
+  backdrop-filter: var(--glass-f);
+  -webkit-backdrop-filter: var(--glass-f);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+  padding: 9px 10px;
+  display: flex; align-items: center; gap: 9px;
+  cursor: pointer; overflow: hidden;
+  min-height: 52px;
+  transition: opacity .3s;
+}
+.ad-card:active { opacity: .85; }
+.ad-icon { font-size: 1.3rem; flex-shrink: 0; }
+.ad-text { flex: 1; overflow: hidden; }
+.ad-label { font-size: 0.46rem; color: var(--ink-soft); letter-spacing: .4px; }
+.ad-title {
+  font-family: 'Special Elite', cursive;
+  font-size: 0.74rem; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ad-cta { font-size: 0.56rem; color: var(--green); font-weight: bold; margin-top: 1px; }
+
+.msg-btn {
+  border: none; border-radius: var(--radius-sm);
+  font-family: 'Special Elite', cursive;
+  font-size: 0.88rem; cursor: pointer;
+  background: var(--ink); color: #fff;
+  box-shadow: var(--shadow-md);
+  display: flex; align-items: center; justify-content: center;
+  gap: 6px; min-height: 52px;
+  transition: transform .1s;
+  letter-spacing: .5px;
+}
+.msg-btn:active { transform: scale(.97); background: #1e2a22; }
+.msg-icon { font-size: 1.1rem; }
+
+/* ══ BIN POPUP ═══════════════════════════════════════════════════ */
+.popup-overlay {
+  position: fixed; inset: 0;
+  background: rgba(20,40,25,.35);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  z-index: 3000; display: none;
+  align-items: flex-end; justify-content: center;
+}
+.popup-overlay.open { display: flex; animation: fadeIn .2s; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.popup-card {
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -6px 40px rgba(40,80,50,.20);
+  /* Respect iPhone home bar */
+  padding: 20px 18px calc(var(--safe-bottom) + 28px);
+  width: 100%; max-width: 480px;
+  animation: slideUp .25s ease;
+}
+@keyframes slideUp {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.popup-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.popup-icon { font-size: 2rem; }
+.popup-title { font-family: 'Special Elite', cursive; font-size: 1.05rem; color: var(--ink); }
+.popup-sub { font-size: 0.7rem; color: var(--ink-soft); margin-top: 2px; }
+.popup-close {
+  margin-left: auto; background: var(--bg); border: none;
+  border-radius: 50%; width: 36px; height: 36px;
+  font-size: .85rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow-sm); flex-shrink: 0; color: var(--ink);
+}
+.popup-body { font-size: 0.78rem; color: var(--ink-soft); line-height: 1.9; }
+.capacity-bar { background: #dde8e0; border-radius: 10px; height: 9px; margin: 6px 0 4px; overflow: hidden; }
+.capacity-fill { height: 100%; border-radius: 10px; }
+.popup-tag {
+  display: inline-block; color: white;
+  border-radius: 20px; padding: 3px 10px;
+  font-size: .64rem; margin-top: 8px; margin-right: 4px;
+}
+.route-btn {
+  display: block; width: 100%; margin-top: 16px; padding: 14px;
+  background: var(--ink); color: white; border: none;
+  border-radius: var(--radius);
+  font-family: 'Special Elite', cursive; font-size: .95rem;
+  cursor: pointer; letter-spacing: 1px;
+  box-shadow: var(--shadow-md);
+  /* iOS active state */
+  -webkit-appearance: none;
+}
+.route-btn:active { background: #1e2a22; }
+
+/* ══ LEGEND ══════════════════════════════════════════════════════ */
+.legend-panel {
+  position: fixed;
+  top: calc(var(--safe-top) + 70px);
+  right: calc(var(--safe-right) + 12px);
+  background: rgba(247,251,248,.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px; z-index: 500;
+  box-shadow: var(--shadow-lg);
+  display: none; min-width: 170px;
+}
+.legend-panel.open { display: block; animation: fadeIn .15s; }
+.legend-row { display: flex; align-items: center; gap: 9px; padding: 5px 0; font-size: .72rem; color: var(--ink); }
+.dot { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; }
+
+/* ══ TOAST ═══════════════════════════════════════════════════════ */
+.toast {
+  position: fixed;
+  top: calc(var(--safe-top) + 74px);
+  left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: white;
+  padding: 9px 20px; border-radius: 20px;
+  font-size: .73rem; z-index: 4000;
+  opacity: 0; transition: opacity .3s;
+  white-space: nowrap; pointer-events: none;
+  box-shadow: var(--shadow-md);
+}
+.toast.show { opacity: 1; }
+
+/* ══ LOADING SPLASH ══════════════════════════════════════════════ */
+.loading {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  z-index: 9999; transition: opacity .6s;
+}
+.loading.hidden { opacity: 0; pointer-events: none; }
+.loading-circle {
+  width: 72px; height: 72px;
+  background: var(--surface);
+  border-radius: 22px; /* iOS icon corners */
+  box-shadow: var(--shadow-lg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2.2rem;
+  animation: spin 2.5s linear infinite;
+}
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.loading-text {
+  font-family: 'Special Elite', cursive;
+  font-size: 1.6rem; letter-spacing: 5px;
+  margin-top: 18px; color: var(--ink);
+}
+.loading-sub { font-size: .7rem; color: var(--ink-soft); margin-top: 8px; }
+.loading-dots { display: flex; gap: 6px; margin-top: 20px; }
+.loading-dot {
+  width: 8px; height: 8px;
+  background: var(--green); border-radius: 50%;
+  animation: dotPulse 1.4s ease-in-out infinite;
+}
+.loading-dot:nth-child(2) { animation-delay: .2s; }
+.loading-dot:nth-child(3) { animation-delay: .4s; }
+@keyframes dotPulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: .4; }
+  40%           { transform: scale(1);   opacity: 1;  }
+}
+
+/* ══ LOGIN SCREEN ════════════════════════════════════════════════ */
+.login-screen {
+  position: fixed; inset: 0;
+  z-index: 10000;
+  display: flex; align-items: flex-end; justify-content: center;
+  transition: opacity .4s;
+}
+.login-screen.hidden { opacity: 0; pointer-events: none; }
+
+.login-bg {
+  position: absolute; inset: 0;
+  background: linear-gradient(160deg, #1a3a22 0%, #2d5a38 40%, #27ae60 100%);
+}
+.login-bg::after {
+  content: '🌍';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -68%);
+  font-size: min(55vw, 260px);
+  opacity: .12;
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+.login-card {
+  position: relative;
+  width: 100%; max-width: 460px;
+  background: var(--surface);
+  border-radius: 28px 28px 0 0;
+  padding: 24px 22px calc(var(--safe-bottom) + 24px);
+  box-shadow: 0 -12px 50px rgba(0,0,0,.22);
+  animation: slideUp .4s cubic-bezier(.34,1.2,.64,1);
+  max-height: 90vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.login-logo { text-align: center; margin-bottom: 22px; }
+.login-logo-circle {
+  width: 70px; height: 70px;
+  background: linear-gradient(135deg, #e8f5e9, #f0f7f2);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 2.2rem; margin-bottom: 10px;
+}
+.login-logo-text {
+  font-family: 'Special Elite', cursive;
+  font-size: 2rem; letter-spacing: 6px; color: var(--ink);
+}
+.login-logo-sub { font-size: .72rem; color: var(--ink-soft); margin-top: 4px; }
+
+.login-divider-text {
+  text-align: center; font-size: .72rem;
+  color: var(--ink-soft); margin-bottom: 16px;
+}
+
+.login-btn {
+  width: 100%; border: none; border-radius: var(--radius);
+  padding: 14px 18px; margin-bottom: 10px;
+  display: flex; align-items: center; gap: 12px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: .88rem; cursor: pointer;
+  min-height: 52px;
+  transition: transform .1s, box-shadow .2s;
+}
+.login-btn:active { transform: scale(.97); }
+
+.login-btn-icon { width: 22px; height: 22px; flex-shrink: 0; }
+
+.google-btn {
+  background: #fff; color: #3c4043;
+  box-shadow: 0 2px 12px rgba(0,0,0,.12);
+}
+.google-btn:active { box-shadow: 0 1px 6px rgba(0,0,0,.1); }
+
+.apple-btn {
+  background: #000; color: #fff;
+  box-shadow: 0 2px 12px rgba(0,0,0,.25);
+}
+.apple-btn svg { fill: white; }
+.apple-btn:active { background: #1a1a1a; }
+
+.login-guest-btn {
+  width: 100%; background: none; border: none;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: .78rem; color: var(--ink-soft);
+  padding: 10px; cursor: pointer; text-align: center;
+  margin-top: 4px;
+  transition: color .15s;
+}
+.login-guest-btn:active { color: var(--ink); }
+
+.login-terms {
+  text-align: center; font-size: .62rem;
+  color: var(--ink-soft); margin-top: 14px; line-height: 1.5;
+}
+.login-terms span { color: var(--green); cursor: pointer; }
+
+/* ── Auth tabs ── */
+.auth-tabs {
+  display: grid; grid-template-columns: 1fr 1fr;
+  background: var(--bg); border-radius: var(--radius-sm);
+  padding: 4px; margin-bottom: 18px; gap: 4px;
+}
+.auth-tab {
+  border: none; border-radius: 10px; padding: 10px;
+  font-family: 'Share Tech Mono', monospace; font-size: .82rem;
+  cursor: pointer; background: transparent; color: var(--ink-soft);
+  transition: background .2s, color .2s; min-height: 40px;
+}
+.auth-tab.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
+
+/* ── Auth fields ── */
+.auth-field { margin-bottom: 12px; }
+.auth-label { display: block; font-size: .68rem; color: var(--ink-soft); margin-bottom: 5px; }
+.auth-input {
+  width: 100%; border: none; border-radius: var(--radius-sm);
+  padding: 13px 14px; background: var(--bg); color: var(--ink);
+  font-family: 'Share Tech Mono', monospace; font-size: 16px;
+  box-shadow: inset 0 0 0 1.5px rgba(40,80,50,.1);
+  outline: none; -webkit-appearance: none; caret-color: var(--green);
+  transition: box-shadow .2s;
+}
+.auth-input:focus { box-shadow: inset 0 0 0 2px var(--green); }
+.auth-input::placeholder { color: var(--ink-soft); }
+
+.auth-pass-wrap { position: relative; }
+.auth-pass-wrap .auth-input { padding-right: 44px; }
+.auth-eye {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; font-size: 1rem; cursor: pointer;
+  padding: 6px; min-width: 36px; min-height: 36px; color: var(--ink-soft);
+}
+
+.auth-error {
+  display: none; font-size: .67rem; color: var(--red);
+  margin-top: 4px; padding-left: 2px;
+}
+
+.auth-submit-btn {
+  width: 100%; border: none; border-radius: var(--radius);
+  padding: 14px; margin-top: 4px;
+  background: var(--ink); color: white;
+  font-family: 'Special Elite', cursive; font-size: .92rem;
+  cursor: pointer; letter-spacing: .5px; min-height: 50px;
+  box-shadow: var(--shadow-md); transition: transform .1s, background .15s;
+}
+.auth-submit-btn:active { transform: scale(.98); background: #1e2a22; }
+
+.auth-divider {
+  text-align: center; position: relative; margin: 14px 0 10px;
+  font-size: .68rem; color: var(--ink-soft);
+}
+.auth-divider::before, .auth-divider::after {
+  content: ''; position: absolute; top: 50%; width: 38%; height: 1px;
+  background: rgba(40,80,50,.12);
+}
+.auth-divider::before { left: 0; }
+.auth-divider::after  { right: 0; }
+.auth-divider span { background: var(--surface); padding: 0 10px; }
+
+/* ── Social buttons row ── */
+.social-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px; }
+.social-sm { padding: 11px 8px !important; margin-bottom: 0 !important; justify-content: center; font-size: .8rem !important; }
+
+/* ── Social form ── */
+.social-form-title {
+  font-family: 'Special Elite', cursive; font-size: 1rem;
+  color: var(--ink); text-align: center; margin-bottom: 4px;
+}
+.social-form-hint { font-size: .7rem; color: var(--ink-soft); text-align: center; margin-bottom: 2px; }
+
+/* ══ AVATAR BUTTON ═══════════════════════════════════════════════ */
+.avatar-btn {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: none; background: var(--green);
+  color: white; font-size: .8rem; font-weight: bold;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  font-family: 'Share Tech Mono', monospace;
+  min-width: 36px; min-height: 36px;
+  transition: transform .1s;
+}
+.avatar-btn:active { transform: scale(.93); }
+
+/* ══ PROFILE MODAL ═══════════════════════════════════════════════ */
+.profile-card { padding: 0 0 0; overflow: hidden; }
+
+.profile-header {
+  background: linear-gradient(135deg, #e8f5e9, #f0f7f2);
+  padding: 28px 22px 20px;
+  text-align: center;
+}
+.profile-avatar-large {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background: var(--green);
+  color: white; font-size: 1.8rem;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  font-family: 'Share Tech Mono', monospace;
+}
+.profile-avatar-large img { width: 100%; height: 100%; object-fit: cover; }
+.profile-name {
+  font-family: 'Special Elite', cursive;
+  font-size: 1.1rem; color: var(--ink);
+}
+.profile-email { font-size: .7rem; color: var(--ink-soft); margin-top: 3px; }
+.profile-badge {
+  display: inline-block; margin-top: 8px;
+  background: var(--green); color: white;
+  border-radius: 20px; padding: 3px 12px;
+  font-size: .65rem;
+}
+
+.profile-body { padding: 16px 20px 4px; }
+
+.profile-stat-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px; margin-bottom: 4px;
+}
+.profile-stat {
+  background: var(--bg); border-radius: var(--radius-sm);
+  padding: 10px 8px; text-align: center;
+}
+.profile-stat-num {
+  font-family: 'Special Elite', cursive;
+  font-size: 1.3rem; color: var(--green);
+}
+.profile-stat-label { font-size: .58rem; color: var(--ink-soft); margin-top: 2px; line-height: 1.3; }
+
+.profile-signout-btn { background: #e05252 !important; box-shadow: 0 4px 14px rgba(224,82,82,.3) !important; }
+.profile-signout-btn.signin { background: var(--green) !important; box-shadow: 0 4px 14px rgba(39,174,96,.3) !important; }
+
+/* ══ GPS PERMISSION MODAL ════════════════════════════════════════ */
+.gps-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(20,40,25,.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 6000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  padding-bottom: calc(var(--safe-bottom) + 24px);
+}
+.gps-modal-overlay.open { display: flex; animation: fadeIn .22s ease; }
+
+.gps-modal-card {
+  background: var(--surface);
+  border-radius: 24px;
+  box-shadow: 0 20px 60px rgba(20,40,25,.3);
+  width: 100%; max-width: 360px;
+  overflow: hidden;
+  animation: scaleIn .25s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes scaleIn {
+  from { transform: scale(.88); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+.gps-modal-header {
+  background: linear-gradient(135deg, #e8f5e9, #f0f7f2);
+  padding: 28px 22px 20px;
+  text-align: center;
+}
+.gps-modal-icon {
+  font-size: 3rem;
+  margin-bottom: 10px;
+  line-height: 1;
+}
+.gps-modal-title {
+  font-family: 'Special Elite', cursive;
+  font-size: 1.25rem;
+  color: var(--ink);
+  letter-spacing: 1px;
+}
+
+.gps-modal-body {
+  padding: 18px 20px 10px;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+.gps-modal-body p {
+  margin-bottom: 14px;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+.perm-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.perm-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.perm-num {
+  background: var(--green);
+  color: white;
+  border-radius: 50%;
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.7rem;
+  font-weight: bold;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.perm-step span:last-child {
+  font-size: 0.75rem;
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.gps-modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 16px 20px calc(var(--safe-bottom) + 16px);
+  border-top: 1px solid rgba(40,80,50,.08);
+}
+.gps-modal-cancel {
+  border: none;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 13px 8px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  min-height: 48px;
+  transition: background .15s;
+}
+.gps-modal-cancel:active { background: #dde8e0; }
+.gps-modal-primary {
+  border: none;
+  background: var(--green);
+  border-radius: var(--radius-sm);
+  padding: 13px 8px;
+  font-family: 'Special Elite', cursive;
+  font-size: 0.85rem;
+  color: white;
+  cursor: pointer;
+  min-height: 48px;
+  box-shadow: 0 4px 14px rgba(39,174,96,.35);
+  transition: background .15s, transform .1s;
+  letter-spacing: .5px;
+}
+.gps-modal-primary:active { background: #1e8449; transform: scale(.97); }
+.leaflet-control-zoom { display: none; }
+.leaflet-popup-content-wrapper {
+  background: rgba(247,251,248,.97) !important;
+  border: none !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: var(--shadow-lg) !important;
+  font-family: 'Share Tech Mono', monospace !important;
+}
+.leaflet-popup-tip { background: rgba(247,251,248,.97) !important; }
+.bin-popup { padding: 4px 2px; min-width: 180px; }
+.bin-popup h3 { font-family: 'Special Elite', cursive; font-size: .9rem; margin-bottom: 5px; color: var(--ink); }
+.bin-popup p { font-size: .7rem; color: var(--ink-soft); line-height: 1.7; }
+.bin-popup .open-btn {
+  display: block; width: 100%; margin-top: 9px; padding: 9px;
+  background: var(--ink); color: white; border: none;
+  border-radius: var(--radius-sm); font-size: .75rem;
+  cursor: pointer; font-family: 'Special Elite', cursive;
+  min-height: 40px;
+}
+</style>
+</head>
+<body>
+
+<!-- ══ LOGIN SCREEN ═══════════════════════════════════════════════ -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-bg"></div>
+  <div class="login-card">
+
+    <div class="login-logo">
+      <div class="login-logo-circle">🌍</div>
+      <div class="login-logo-text">World</div>
+      <div class="login-logo-sub">Encuentra basureros cerca de ti</div>
+    </div>
+
+    <!-- TABS -->
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin"    onclick="switchTab('login')">Ingresar</button>
+      <button class="auth-tab"        id="tabRegister" onclick="switchTab('register')">Registrarse</button>
+    </div>
+
+    <!-- VIEW: LOGIN -->
+    <div id="loginView">
+      <div class="auth-field">
+        <label class="auth-label">Correo electrónico</label>
+        <input class="auth-input" id="loginEmail" type="email" inputmode="email"
+               placeholder="correo@ejemplo.com" autocomplete="email" autocapitalize="none">
+        <span class="auth-error" id="loginEmailErr"></span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Contraseña</label>
+        <div class="auth-pass-wrap">
+          <input class="auth-input" id="loginPass" type="password"
+                 placeholder="Tu contraseña" autocomplete="current-password">
+          <button class="auth-eye" type="button" onclick="togglePass('loginPass',this)">👁</button>
+        </div>
+        <span class="auth-error" id="loginPassErr"></span>
+      </div>
+      <button class="auth-submit-btn" type="button" onclick="loginUser()">Ingresar →</button>
+      <div class="auth-divider"><span>o continúa con</span></div>
+      <div class="social-row">
+        <button class="login-btn google-btn social-sm" type="button" onclick="signInGoogle()">
+          <svg class="login-btn-icon" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          Google
+        </button>
+        <button class="login-btn apple-btn social-sm" type="button" id="appleBtn" onclick="signInApple()">
+          <svg class="login-btn-icon" viewBox="0 0 24 24" fill="white"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.7 9.05 7.4c1.32.07 2.22.72 2.98.75.82-.17 1.62-.82 2.98-.88 1.62-.08 2.84.68 3.6 1.72-3.36 2.08-2.67 6.53.63 7.78-.5 1.3-1.18 2.58-2.19 3.51zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+          Apple
+        </button>
+      </div>
+      <button class="login-guest-btn" type="button" onclick="continueAsGuest()">Entrar sin cuenta →</button>
+    </div>
+
+    <!-- VIEW: REGISTER -->
+    <div id="registerView" style="display:none">
+      <div class="auth-field">
+        <label class="auth-label">Nombre completo</label>
+        <input class="auth-input" id="regName" type="text"
+               placeholder="Ej. María García" autocomplete="name" autocapitalize="words">
+        <span class="auth-error" id="regNameErr"></span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Correo electrónico</label>
+        <input class="auth-input" id="regEmail" type="email" inputmode="email"
+               placeholder="correo@ejemplo.com" autocomplete="email" autocapitalize="none">
+        <span class="auth-error" id="regEmailErr"></span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Contraseña</label>
+        <div class="auth-pass-wrap">
+          <input class="auth-input" id="regPass" type="password"
+                 placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+          <button class="auth-eye" type="button" onclick="togglePass('regPass',this)">👁</button>
+        </div>
+        <span class="auth-error" id="regPassErr"></span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Confirmar contraseña</label>
+        <div class="auth-pass-wrap">
+          <input class="auth-input" id="regPass2" type="password"
+                 placeholder="Repite tu contraseña" autocomplete="new-password">
+          <button class="auth-eye" type="button" onclick="togglePass('regPass2',this)">👁</button>
+        </div>
+        <span class="auth-error" id="regPass2Err"></span>
+      </div>
+      <button class="auth-submit-btn" type="button" onclick="registerUser()">Crear cuenta →</button>
+      <div class="auth-divider"><span>o continúa con</span></div>
+      <div class="social-row">
+        <button class="login-btn google-btn social-sm" type="button" onclick="signInGoogle()">
+          <svg class="login-btn-icon" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          Google
+        </button>
+        <button class="login-btn apple-btn social-sm" type="button" onclick="signInApple()">
+          <svg class="login-btn-icon" viewBox="0 0 24 24" fill="white"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.7 9.05 7.4c1.32.07 2.22.72 2.98.75.82-.17 1.62-.82 2.98-.88 1.62-.08 2.84.68 3.6 1.72-3.36 2.08-2.67 6.53.63 7.78-.5 1.3-1.18 2.58-2.19 3.51zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+          Apple
+        </button>
+      </div>
+    </div>
+
+    <!-- VIEW: SOCIAL FORM -->
+    <div id="socialView" style="display:none">
+      <input type="hidden" id="socialProvider" value="google">
+      <div class="social-form-title" id="socialFormTitle">Continuar con Google</div>
+      <div class="social-form-hint" id="socialEmailHint">Usa tu correo de Gmail</div>
+      <div class="auth-field" style="margin-top:14px">
+        <label class="auth-label">Tu nombre</label>
+        <input class="auth-input" id="socialName" type="text"
+               placeholder="Nombre completo" autocomplete="name" autocapitalize="words">
+        <span class="auth-error" id="socialNameErr"></span>
+      </div>
+      <div class="auth-field">
+        <label class="auth-label">Correo electrónico</label>
+        <input class="auth-input" id="socialEmail" type="email" inputmode="email"
+               placeholder="correo@gmail.com" autocomplete="email" autocapitalize="none">
+        <span class="auth-error" id="socialEmailErr"></span>
+      </div>
+      <button class="auth-submit-btn" type="button" onclick="submitSocial()">Continuar →</button>
+      <button class="login-guest-btn" type="button" onclick="showView('loginView');switchTab('login')">← Volver</button>
+    </div>
+
+    <div class="login-terms">
+      Al ingresar aceptas nuestros <span>Términos de uso</span> y <span>Política de privacidad</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SPLASH SCREEN ══════════════════════════════════════════════ -->
+<div class="loading" id="loading">
+  <div class="loading-circle">🌍</div>
+  <div class="loading-text">World</div>
+  <div class="loading-sub">Iniciando mapa...</div>
+  <div class="loading-dots">
+    <div class="loading-dot"></div>
+    <div class="loading-dot"></div>
+    <div class="loading-dot"></div>
+  </div>
+</div>
+
+<!-- ══ MAP ════════════════════════════════════════════════════════ -->
+<div id="map"></div>
+
+<!-- ══ HEADER ════════════════════════════════════════════════════ -->
+<div class="header">
+  <div class="logo-circle">🌍</div>
+  <div class="logo-text">World</div>
+  <button class="legend-btn" onclick="toggleLegend()">🗺 Leyenda</button>
+  <button class="avatar-btn" id="avatarBtn" onclick="openProfile()" aria-label="Mi perfil">
+    <img id="avatarImg" src="" alt="" style="display:none;width:100%;height:100%;border-radius:50%;object-fit:cover;">
+    <span id="avatarInitial">?</span>
+  </button>
+</div>
+
+<!-- ══ ZOOM BUTTONS ═══════════════════════════════════════════════ -->
+<div class="zoom-controls">
+  <div class="zoom-btn" onclick="map.zoomIn()">+</div>
+  <div class="zoom-btn" onclick="map.zoomOut()">−</div>
+</div>
+
+<!-- ══ BOTTOM PANEL ═══════════════════════════════════════════════ -->
+<div class="bottom-panel">
+
+  <!-- Search -->
+  <div class="search-wrap" id="searchWrap">
+    <span class="search-icon-left">🔍</span>
+    <input
+      class="search-bar" id="searchInput"
+      type="search"
+      inputmode="search"
+      enterkeyhint="search"
+      placeholder="Buscar ciudad, dirección..."
+      autocomplete="off" autocorrect="off"
+      autocapitalize="off" spellcheck="false"
+      oninput="onSearchInput()"
+      onfocus="onSearchFocus()"
+    />
+    <button class="search-clear" id="searchClear" onclick="clearSearch()" aria-label="Limpiar búsqueda">✕</button>
+    <button class="gps-btn" id="gpsBtn" onclick="requestGPS()" aria-label="Usar mi ubicación">◎</button>
+    <div class="suggestions" id="suggestions" role="listbox"></div>
+  </div>
+
+  <!-- Ad + Message -->
+  <div class="bottom-row">
+    <div class="ad-card" id="adCard" onclick="adClick()" role="button" aria-label="Anuncio">
+      <div class="ad-icon" id="adIcon">🌿</div>
+      <div class="ad-text">
+        <div class="ad-label">Publicidad</div>
+        <div class="ad-title" id="adTitle">EcoLimpio</div>
+        <div class="ad-cta" id="adCta">Ver más →</div>
+      </div>
+    </div>
+    <button class="msg-btn" onclick="sendMessage()" aria-label="Enviar mensaje">
+      <span class="msg-icon">💬</span> Mensaje
+    </button>
+  </div>
+</div>
+
+<!-- ══ BIN DETAIL POPUP ═══════════════════════════════════════════ -->
+<div class="popup-overlay" id="popup" onclick="closePopup(event)" role="dialog" aria-modal="true">
+  <div class="popup-card" onclick="event.stopPropagation()">
+    <div class="popup-header">
+      <div class="popup-icon" id="pIcon">🗑</div>
+      <div style="flex:1">
+        <div class="popup-title" id="pTitle"></div>
+        <div class="popup-sub" id="pSub"></div>
+      </div>
+      <button class="popup-close" onclick="closePopup()" aria-label="Cerrar">✕</button>
+    </div>
+    <div class="popup-body" id="pBody"></div>
+    <button class="route-btn" id="pRoute">🗺 Ver ruta hacia aquí</button>
+  </div>
+</div>
+
+<!-- ══ LEGEND ════════════════════════════════════════════════════ -->
+<div class="legend-panel" id="legendPanel" role="tooltip">
+  <div style="font-family:'Special Elite',cursive;font-size:.85rem;margin-bottom:8px;padding-bottom:6px;border-bottom:1.5px solid #dde8e0;color:var(--ink)">Basureros</div>
+  <div class="legend-row"><div class="dot" style="background:#27ae60"></div> Disponible</div>
+  <div class="legend-row"><div class="dot" style="background:#e8962a"></div> Media capacidad</div>
+  <div class="legend-row"><div class="dot" style="background:#e05252"></div> Lleno — urgente</div>
+  <div class="legend-row" style="margin-top:7px;padding-top:6px;border-top:1.5px solid #dde8e0">
+    <div class="dot" style="background:#3a9bd5"></div> Mi ubicación
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- ══ PROFILE MODAL ════════════════════════════════════════════════ -->
+<div class="gps-modal-overlay" id="profileModal" onclick="if(event.target===this)closeProfile()">
+  <div class="gps-modal-card profile-card">
+    <div class="profile-header">
+      <div class="profile-avatar-large" id="profileAvatarLarge">?</div>
+      <div class="profile-name" id="profileName">Invitado</div>
+      <div class="profile-email" id="profileEmail">Sin cuenta</div>
+      <div class="profile-badge" id="profileBadge">👤 Invitado</div>
+    </div>
+    <div class="profile-body">
+      <div class="profile-stat-row">
+        <div class="profile-stat"><div class="profile-stat-num">0</div><div class="profile-stat-label">Basureros reportados</div></div>
+        <div class="profile-stat"><div class="profile-stat-num">0</div><div class="profile-stat-label">Búsquedas</div></div>
+        <div class="profile-stat"><div class="profile-stat-num">0</div><div class="profile-stat-label">Días activo</div></div>
+      </div>
+    </div>
+    <div class="gps-modal-actions">
+      <button class="gps-modal-cancel" onclick="closeProfile()">Cerrar</button>
+      <button class="gps-modal-primary profile-signout-btn" id="profileActionBtn" onclick="handleProfileAction()">Cerrar sesión</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ GPS PERMISSION MODAL ════════════════════════════════════════ -->
+<div class="gps-modal-overlay" id="gpsModal" onclick="handleModalOverlayClick(event)">
+  <div class="gps-modal-card">
+    <div class="gps-modal-header">
+      <div class="gps-modal-icon" id="gpsModalIcon"></div>
+      <div class="gps-modal-title" id="gpsModalTitle">Activar ubicación</div>
+    </div>
+    <div class="gps-modal-body" id="gpsModalBody"></div>
+    <div class="gps-modal-actions">
+      <button class="gps-modal-cancel" onclick="closeGpsModal()">Ahora no</button>
+      <button class="gps-modal-primary" id="gpsModalPrimary" onclick="confirmGpsPermission()">📍 Activar ubicación</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══ MAP INIT ═════════════════════════════════════════════════ */
+const map = L.map('map', {
+  zoomControl: false,
+  minZoom: 2, maxZoom: 19,
+  // Smooth inertia on touch
+  inertia: true,
+  inertiaDeceleration: 3000,
+  inertiaMaxSpeed: 1500,
+  tap: true,
+  tapTolerance: 15,
+}).setView([20, 0], 2);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom: 19,
+  // Retina tiles for sharp display on iPhone
+  detectRetina: true,
+}).addTo(map);
+
+let bins = [], userMarker = null, searchMarker = null;
+let userLat = null, userLng = null;
+let searchTimer = null;
+
+/* ══ ADS ══════════════════════════════════════════════════════ */
+const ads = [
+  { icon:'🌿', title:'EcoLimpio',   cta:'Agendar →',    bg:'#e8f5e9' },
+  { icon:'♻️', title:'ReciclaYa',   cta:'Ver puntos →', bg:'#e3f2fd' },
+  { icon:'🏪', title:'Mkt Verde',   cta:'Ver tienda →', bg:'#fff8e1' },
+  { icon:'🚚', title:'Express',     cta:'Cotizar →',    bg:'#fce4ec' },
+  { icon:'💧', title:'AguaPura',    cta:'Pedir →',      bg:'#e8eaf6' },
+];
+let adIdx = 0;
+function renderAd(i) {
+  const a = ads[i], card = document.getElementById('adCard');
+  card.style.opacity = '0';
+  setTimeout(() => {
+    card.style.background = `linear-gradient(120deg,${a.bg},rgba(247,251,248,.88))`;
+    document.getElementById('adIcon').textContent = a.icon;
+    document.getElementById('adTitle').textContent = a.title;
+    document.getElementById('adCta').textContent = a.cta;
+    card.style.opacity = '1';
+  }, 180);
+}
+renderAd(0);
+setInterval(() => { adIdx = (adIdx + 1) % ads.length; renderAd(adIdx); }, 5000);
+function adClick() { showToast('📣 Abriendo anuncio...'); }
+
+/* ══ BIN SYSTEM – REAL DATA FROM OPENSTREETMAP ════════════════ */
+
+let binLayer = L.layerGroup().addTo(map); // layer group for easy clear
+let binCache = {};  // cache by rounded lat/lng key
+let loadingBins = false;
+
+// Status indicator element
+function showBinStatus(msg, isLoading) {
+  let el = document.getElementById('binStatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'binStatus';
+    el.style.cssText = `
+      position:fixed; top:calc(var(--safe-top) + 68px); left:50%;
+      transform:translateX(-50%);
+      background:rgba(45,58,48,.88); color:#fff;
+      padding:7px 16px; border-radius:20px; font-size:.72rem;
+      z-index:500; transition:opacity .3s; white-space:nowrap;
+      backdrop-filter:blur(8px); pointer-events:none;
+    `;
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = '1';
+  if (!isLoading) setTimeout(() => el.style.opacity = '0', 2500);
+}
+
+// Fetch real bins from OpenStreetMap Overpass API
+async function fetchRealBins(lat, lng, radiusM = 1500) {
+  const cacheKey = `${(lat).toFixed(2)},${(lng).toFixed(2)}`;
+  if (binCache[cacheKey]) return binCache[cacheKey];
+
+  // Overpass query: waste baskets, recycling, waste disposal points
+  const query = `
+    [out:json][timeout:15];
+    (
+      node["amenity"="waste_basket"](around:${radiusM},${lat},${lng});
+      node["amenity"="recycling"](around:${radiusM},${lat},${lng});
+      node["amenity"="waste_disposal"](around:${radiusM},${lat},${lng});
+      node["amenity"="waste_transfer_station"](around:${radiusM},${lat},${lng});
+    );
+    out body;
+  `;
+
+  const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+  const res  = await fetch(url, { signal: AbortSignal.timeout(14000) });
+  const data = await res.json();
+
+  const results = (data.elements || []).map((el, i) => {
+    const tags = el.tags || {};
+    const type = tags.amenity === 'recycling'              ? 'Reciclaje'
+               : tags.amenity === 'waste_disposal'         ? 'Punto Limpio'
+               : tags.amenity === 'waste_transfer_station' ? 'Estación'
+               :                                             'Basurero';
+    const name = tags.name || tags['name:es'] || `${type} #${i+1}`;
+    const pct  = Math.floor(Math.random() * 90 + 5); // simulated fill %
+    return {
+      id: `osm_${el.id}`,
+      lat: el.lat, lng: el.lon,
+      name, type,
+      addr: tags['addr:street'] ? `${tags['addr:street']} ${tags['addr:housenumber']||''}`.trim() : '',
+      pct,
+      status: pct >= 90 ? 'LLENO ⚠️' : pct >= 65 ? 'Media capacidad' : 'Disponible',
+      col:    pct >= 90 ? '#e05252'   : pct >= 65 ? '#e8962a'         : '#27ae60',
+      freq:   tags.opening_hours || 'No especificado',
+      recycling: Object.keys(tags).filter(k => k.startsWith('recycling:')).map(k => k.replace('recycling:','')).join(', '),
+      source: 'osm',
+    };
+  });
+
+  binCache[cacheKey] = results;
+  return results;
+}
+
+// Generate fallback simulated bins when OSM returns 0
+function generateFallbackBins(lat, lng, count = 8) {
+  const offsets = [
+    [.0025,.004],[-.003,.0015],[.005,-.002],[-.0015,-.005],
+    [.006,.006],[-.007,.003],[.0008,-.007],[-.004,-.003],[.008,-.0005],
+  ].slice(0, count);
+  const types = ['Residencial','Mixto','Ecológico','Parque','Vial','Punto Limpio'];
+  const freqs  = ['Lun · Mié · Vie','Mar · Jue · Sáb','Diario','Lun a Sáb'];
+  return offsets.map((d, i) => {
+    const pct  = Math.floor(Math.random() * 95 + 3);
+    const type = types[i % types.length];
+    return {
+      id: `sim_${i}`,
+      lat: lat + d[0], lng: lng + d[1],
+      name: `${type} ${i+1}`, type,
+      addr: '', pct,
+      status: pct >= 90 ? 'LLENO ⚠️' : pct >= 65 ? 'Media capacidad' : 'Disponible',
+      col:    pct >= 90 ? '#e05252'   : pct >= 65 ? '#e8962a'         : '#27ae60',
+      freq:   freqs[i % freqs.length],
+      recycling: '', source: 'sim',
+    };
+  });
+}
+
+// Icons per bin type
+function trashIcon(b) {
+  const emoji = b.type === 'Reciclaje' ? '♻️'
+              : b.type === 'Punto Limpio' || b.type === 'Estación' ? '🏭'
+              : b.pct >= 90 ? '🚫' : '🗑';
+  const glow  = b.pct >= 90 ? 'drop-shadow(0 0 7px #e05252)'
+              : b.pct >= 65 ? 'drop-shadow(0 0 5px #e8962a)'
+              :                'drop-shadow(0 2px 5px rgba(40,80,50,.35))';
+  const pulse = b.pct >= 90 ? 'animation:pulse 1.2s ease-in-out infinite;' : '';
+  return L.divIcon({
+    className: '',
+    html: `<div style="font-size:22px;filter:${glow};${pulse}text-align:center;line-height:1;cursor:pointer">${emoji}</div>`,
+    iconSize:[26,26], iconAnchor:[13,13], popupAnchor:[0,-13],
+  });
+}
+
+function userIcon() {
+  return L.divIcon({ className:'', html:`<div style="width:22px;height:22px;background:#3a9bd5;border:3px solid white;border-radius:50%;box-shadow:0 0 0 6px rgba(58,155,213,.22),0 2px 8px rgba(0,0,0,.2)"></div>`, iconSize:[22,22], iconAnchor:[11,11] });
+}
+function pinIcon() {
+  return L.divIcon({ className:'', html:`<div style="width:18px;height:18px;background:#e05252;border:3px solid white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,.25)"></div>`, iconSize:[18,18], iconAnchor:[9,18] });
+}
+
+// Load and render bins for a location
+async function loadBinsAt(lat, lng) {
+  if (loadingBins) return;
+  loadingBins = true;
+  binLayer.clearLayers();
+  bins = [];
+
+  showBinStatus('🔍 Buscando basureros reales...', true);
+
+  try {
+    const real = await fetchRealBins(lat, lng, 2000);
+    if (real.length > 0) {
+      bins = real;
+      showBinStatus(`✅ ${real.length} basureros encontrados`, false);
+    } else {
+      bins = generateFallbackBins(lat, lng);
+      showBinStatus(`📍 ${bins.length} basureros en esta zona`, false);
+    }
+  } catch(e) {
+    bins = generateFallbackBins(lat, lng);
+    showBinStatus(`📍 ${bins.length} basureros en esta zona`, false);
+  }
+
+  bins.forEach(b => {
+    const m = L.marker([b.lat, b.lng], { icon: trashIcon(b) });
+    const srcBadge = b.source === 'osm'
+      ? '<span style="font-size:.58rem;background:#3a9bd5;color:white;border-radius:10px;padding:1px 6px;margin-left:4px">OSM</span>'
+      : '<span style="font-size:.58rem;background:#888;color:white;border-radius:10px;padding:1px 6px;margin-left:4px">~</span>';
+    m.bindPopup(`
+      <div class="bin-popup">
+        <h3>${b.type==='Reciclaje'?'♻️':b.pct>=90?'🚫':'🗑'} ${b.name}${srcBadge}</h3>
+        ${b.addr ? `<p>📍 ${b.addr}</p>` : ''}
+        <p>Estado: <b style="color:${b.col}">${b.status}</b></p>
+        <p>Capacidad aprox: ${b.pct}%</p>
+        ${b.recycling ? `<p>Acepta: ${b.recycling}</p>` : ''}
+        <button class="open-btn" onclick="showBin('${b.id}')">Ver detalles</button>
+      </div>`, { maxWidth: 230 });
+    m.addTo(binLayer);
+  });
+
+  loadingBins = false;
+}
+
+// Reload bins when map stops moving (live update on pan/zoom)
+map.on('moveend', () => {
+  const zoom = map.getZoom();
+  if (zoom >= 14) {
+    const c = map.getCenter();
+    loadBinsAt(c.lat, c.lng);
+  }
+});
+
+// BIN DETAIL POPUP
+function showBin(id) {
+  map.closePopup();
+  const b = bins.find(x => x.id == id); if (!b) return;
+  document.getElementById('pIcon').textContent = b.type==='Reciclaje'?'♻️':b.pct>=90?'🚫':'🗑';
+  document.getElementById('pTitle').textContent = b.name;
+  document.getElementById('pSub').textContent   = b.addr || b.type;
+  document.getElementById('pBody').innerHTML = `
+    <b>Estado:</b> <span style="color:${b.col};font-weight:bold">${b.status}</span><br>
+    <b>Tipo:</b> ${b.type}<br>
+    <b>Capacidad aprox:</b> ${b.pct}%
+    <div class="capacity-bar"><div class="capacity-fill" style="width:${b.pct}%;background:${b.col}"></div></div>
+    <b>Horario:</b> ${b.freq}
+    ${b.recycling ? `<br><b>Acepta:</b> ${b.recycling}` : ''}
+    <div>
+      <span class="popup-tag" style="background:${b.col}">${b.status}</span>
+      <span class="popup-tag" style="background:#5a7060">${b.type}</span>
+      ${b.source==='osm'?'<span class="popup-tag" style="background:#3a9bd5">Dato real OSM</span>':''}
+    </div>`;
+  document.getElementById('pRoute').onclick = () => {
+    closePopup();
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}`, '_blank');
+  };
+  document.getElementById('popup').classList.add('open');
+}
+
+/* ══ LOCATION HANDLERS ════════════════════════════════════════ */
+
+function onLocationFound(lat, lng, fly = false) {
+  userLat = lat; userLng = lng;
+  if (userMarker) map.removeLayer(userMarker);
+  userMarker = L.marker([lat, lng], { icon: userIcon(), zIndexOffset: 1000 })
+    .addTo(map).bindTooltip('📍 Mi ubicación', { permanent:false, direction:'top' });
+  if (fly) map.flyTo([lat, lng], 16, { duration: 1.4 });
+  else     map.setView([lat, lng], 15);
+
+  fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`)
+    .then(r => r.json())
+    .then(d => {
+      const p = d.display_name
+        ? d.display_name.split(',').slice(0, 3).join(', ')
+        : `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+      document.getElementById('searchInput').value = p;
+      document.getElementById('searchClear').classList.add('visible');
+      showToast('✅ Ubicación encontrada');
+    })
+    .catch(() => {
+      document.getElementById('searchInput').value = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+    });
+
+  loadBinsAt(lat, lng);
+  hideSuggestions();
+}
+
+/* ══ SEARCH ═══════════════════════════════════════════════════ */
+function onSearchInput() {
+  const v = document.getElementById('searchInput').value.trim();
+  const cl = document.getElementById('searchClear');
+  v ? cl.classList.add('visible') : cl.classList.remove('visible');
+  clearTimeout(searchTimer);
+  if (v.length < 2) { hideSuggestions(); return; }
+  searchTimer = setTimeout(() => fetchSuggestions(v), 380);
+}
+
+function onSearchFocus() {
+  const v = document.getElementById('searchInput').value.trim();
+  if (v.length >= 2) fetchSuggestions(v); else showGPSOpt();
+}
+
+function fetchSuggestions(q) {
+  // Global search — no country restriction, include cities, streets, addresses
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=7&addressdetails=1&accept-language=es`;
+  fetch(url)
+    .then(r => r.json())
+    .then(res => renderSuggestions(res, q))
+    .catch(() => hideSuggestions());
+}
+
+function renderSuggestions(res, q) {
+  const box = document.getElementById('suggestions');
+  let h = gpsRow();
+  if (!res.length) {
+    h += `<div class="suggestion-item"><span class="sug-icon">🔍</span><div><div class="sug-main" style="color:var(--ink-soft)">Sin resultados para "${eh(q)}"</div></div></div>`;
+  } else {
+    res.forEach(r => {
+      const parts = r.display_name.split(',');
+      const main  = parts[0].trim();
+      const sub   = parts.slice(1, 4).join(', ').trim();
+      h += `<div class="suggestion-item" onclick="selectResult(${r.lat},${r.lon},'${esc(r.display_name)}')">
+        <span class="sug-icon">${ti(r.type, r.class)}</span>
+        <div>
+          <div class="sug-main">${eh(main)}</div>
+          <div class="sug-sub">${eh(sub)}</div>
+        </div>
+      </div>`;
+    });
+  }
+  box.innerHTML = h;
+  box.classList.add('open');
+}
+
+function showGPSOpt() {
+  const box = document.getElementById('suggestions');
+  box.innerHTML = gpsRow();
+  box.classList.add('open');
+}
+
+function gpsRow() {
+  return `<div class="suggestion-item gps-option" onclick="requestGPSFromSearch()">
+    <span class="sug-icon">📍</span>
+    <div>
+      <div class="sug-main">Usar mi ubicación exacta</div>
+      <div class="sug-sub">GPS del dispositivo</div>
+    </div>
+  </div>`;
+}
+
+function requestGPSFromSearch() {
+  hideSuggestions();
+  document.getElementById('searchInput').blur();
+  requestGPS();
+}
+
+function selectResult(lat, lng, name) {
+  hideSuggestions();
+  const parts = name.split(',');
+  document.getElementById('searchInput').value = parts.slice(0, 3).join(',').trim();
+  document.getElementById('searchClear').classList.add('visible');
+  document.getElementById('searchInput').blur();
+
+  if (searchMarker) map.removeLayer(searchMarker);
+  searchMarker = L.marker([parseFloat(lat), parseFloat(lng)], { icon: pinIcon() })
+    .addTo(map)
+    .bindPopup(`<div class="bin-popup"><h3>📍 ${eh(parts[0])}</h3><p>${eh(parts.slice(1,3).join(','))}</p></div>`)
+    .openPopup();
+
+  map.flyTo([parseFloat(lat), parseFloat(lng)], 15, { duration: 1.3 });
+  loadBinsAt(parseFloat(lat), parseFloat(lng));
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('searchClear').classList.remove('visible');
+  hideSuggestions();
+  if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
+  document.getElementById('searchInput').focus();
+}
+
+function hideSuggestions() {
+  document.getElementById('suggestions').classList.remove('open');
+}
+
+function ti(type, cls) {
+  if (type === 'city' || type === 'town' || type === 'municipality') return '🏙️';
+  if (type === 'village' || type === 'hamlet') return '🏘️';
+  if (type === 'suburb' || type === 'neighbourhood') return '📍';
+  if (type === 'country') return '🌍';
+  if (type === 'state' || type === 'region' || type === 'province') return '🗺️';
+  if (cls === 'highway' || type === 'road' || type === 'street') return '🛣️';
+  if (cls === 'amenity') return '🏛️';
+  if (cls === 'shop') return '🛒';
+  if (type === 'park' || cls === 'leisure') return '🌳';
+  if (type === 'hospital' || type === 'clinic') return '🏥';
+  return '📌';
+}
+function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+function eh(s)  { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+
+/* ══ UI HELPERS ═══════════════════════════════════════════════ */
+function sendMessage()  { showToast('📨 Función de mensajes próximamente'); }
+function toggleLegend() { document.getElementById('legendPanel').classList.toggle('open'); }
+function closePopup(e)  { if (!e || e.target===document.getElementById('popup')) document.getElementById('popup').classList.remove('open'); }
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2800);
+}
+
+/* ══ PWA: SERVICE WORKER (offline cache) ══════════════════════ */
+if ('serviceWorker' in navigator) {
+  const swCode = `
+    const CACHE = 'world-v1';
+    const ASSETS = [
+      'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
+      'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
+    ];
+    self.addEventListener('install', e => {
+      e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+      self.skipWaiting();
+    });
+    self.addEventListener('fetch', e => {
+      if (e.request.url.includes('tile.openstreetmap.org')) {
+        e.respondWith(
+          caches.open(CACHE).then(c =>
+            c.match(e.request).then(r => r || fetch(e.request).then(res => {
+              c.put(e.request, res.clone()); return res;
+            }))
+          )
+        );
+      }
+    });
+  `;
+  const swBlob = new Blob([swCode], { type: 'application/javascript' });
+  const swURL  = URL.createObjectURL(swBlob);
+  navigator.serviceWorker.register(swURL).catch(() => {});
+}
+
+/* ══ AUTH CALLBACKS ═══════════════════════════════════════════ */
+let currentUser = null;
+let isGuest = false;
+
+window.onSignInSuccess = (user) => {
+  currentUser = user;
+  isGuest = false;
+  hideLoginScreen();
+  updateAvatar(user);
+  showToast(`👋 Bienvenido, ${user.displayName?.split(' ')[0] || 'Usuario'}`);
+};
+
+window.onSignOutSuccess = () => {
+  currentUser = null;
+  isGuest = false;
+  closeProfile();
+  showLoginScreen();
+  showToast('👋 Sesión cerrada');
+};
+
+window.onAuthStateUser = (user) => {
+  currentUser = user;
+  isGuest = false;
+  hideLoginScreen();
+  updateAvatar(user);
+};
+
+window.onAuthStateNoUser = () => {
+  // Only show login if not already shown and not guest
+  if (!isGuest) showLoginScreen();
+};
+
+function showLoginScreen() {
+  document.getElementById('loginScreen').classList.remove('hidden');
+}
+function hideLoginScreen() {
+  document.getElementById('loginScreen').classList.add('hidden');
+}
+
+function continueAsGuest() {
+  isGuest = true;
+  hideLoginScreen();
+  updateAvatarGuest();
+  showToast('👤 Entrando como invitado');
+}
+
+function updateAvatar(user) {
+  const btn = document.getElementById('avatarBtn');
+  const img = document.getElementById('avatarImg');
+  const ini = document.getElementById('avatarInitial');
+  if (user.photoURL) {
+    img.src = user.photoURL;
+    img.style.display = 'block';
+    ini.style.display = 'none';
+  } else {
+    const name = user.displayName || user.email || '?';
+    ini.textContent = name.charAt(0).toUpperCase();
+    ini.style.display = 'block';
+    img.style.display = 'none';
+  }
+}
+
+function updateAvatarGuest() {
+  document.getElementById('avatarInitial').textContent = '👤';
+  document.getElementById('avatarInitial').style.display = 'block';
+  document.getElementById('avatarImg').style.display = 'none';
+  document.getElementById('avatarBtn').style.background = '#5a7060';
+}
+
+function openProfile() {
+  const modal = document.getElementById('profileModal');
+  const avatarLg = document.getElementById('profileAvatarLarge');
+  const actionBtn = document.getElementById('profileActionBtn');
+
+  if (isGuest || !currentUser) {
+    avatarLg.innerHTML = '<span style="font-size:2rem">👤</span>';
+    document.getElementById('profileName').textContent = 'Invitado';
+    document.getElementById('profileEmail').textContent = 'Sin cuenta vinculada';
+    document.getElementById('profileBadge').textContent = '👤 Invitado';
+    document.getElementById('profileBadge').style.background = '#5a7060';
+    actionBtn.textContent = '🔑 Iniciar sesión';
+    actionBtn.classList.add('signin');
+    actionBtn.onclick = () => { closeProfile(); showLoginScreen(); };
+  } else {
+    const user = currentUser;
+    if (user.photoURL) {
+      avatarLg.innerHTML = `<img src="${user.photoURL}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+    } else {
+      avatarLg.textContent = (user.displayName||user.email||'?').charAt(0).toUpperCase();
+    }
+    document.getElementById('profileName').textContent = user.displayName || 'Usuario';
+    document.getElementById('profileEmail').textContent = user.email || '';
+    const prov = user.provider || (user.providerData?.[0]?.providerId) || '';
+    const badgeIcon = prov.includes('google') ? '🔵 Google' : prov.includes('apple') ? '🍎 Apple' : '✅ Conectado';
+    document.getElementById('profileBadge').textContent = badgeIcon;
+    document.getElementById('profileBadge').style.background = 'var(--green)';
+    actionBtn.textContent = 'Cerrar sesión';
+    actionBtn.classList.remove('signin');
+    actionBtn.onclick = handleProfileAction;
+  }
+  modal.classList.add('open');
+}
+
+function closeProfile() {
+  document.getElementById('profileModal').classList.remove('open');
+}
+
+function handleProfileAction() {
+  if (window.signOutUser) window.signOutUser();
+  else onSignOutSuccess();
+}
+
+/* ══ INIT ═════════════════════════════════════════════════════ */
+window.addEventListener('load', () => {
+  setTimeout(() => document.getElementById('loading').classList.add('hidden'), 800);
+
+  // Show Apple button only on Apple devices
+  const ua = navigator.userAgent;
+  const isApple = /iPhone|iPad|iPod|Macintosh/.test(ua);
+  document.getElementById('appleBtn').style.display = isApple ? 'flex' : 'none';
+});
+
+// Invalidate Leaflet size after orientation change
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => map.invalidateSize(), 300);
+});
+window.addEventListener('resize', () => {
+  map.invalidateSize();
+});
+</script>
+</body>
+</html>
